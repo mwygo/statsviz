@@ -3,8 +3,10 @@ package plot
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/shirou/gopsutil/process"
 	"io"
 	"math"
+	"os"
 	"runtime/debug"
 	"runtime/metrics"
 	"sync"
@@ -119,6 +121,9 @@ type heapGlobal struct {
 	idxunused   int
 	idxfree     int
 	idxreleased int
+
+	p   process.Process
+	pid int32
 }
 
 func makeHeapGlobalPlot(idxs map[string]int) *heapGlobal {
@@ -127,12 +132,16 @@ func makeHeapGlobalPlot(idxs map[string]int) *heapGlobal {
 	idxfree, ok3 := idxs["/memory/classes/heap/free:bytes"]
 	idxreleased, ok4 := idxs["/memory/classes/heap/released:bytes"]
 
+	pid := int32(os.Getpid())
+
 	return &heapGlobal{
 		enabled:     ok1 && ok2 && ok3 && ok4,
 		idxobj:      idxobj,
 		idxunused:   idxunused,
 		idxfree:     idxfree,
 		idxreleased: idxreleased,
+		p:           process.Process{Pid: pid},
+		pid:         pid,
 	}
 }
 
@@ -164,6 +173,18 @@ func (p *heapGlobal) layout(_ []metrics.Sample) interface{} {
 				HoverOn:    "points+fills",
 				StackGroup: "one",
 			},
+			{
+				Name:       "rss",
+				Unitfmt:    "%{y:.4s}B",
+				HoverOn:    "points+fills",
+				StackGroup: "one",
+			},
+			{
+				Name:       "vms",
+				Unitfmt:    "%{y:.4s}B",
+				HoverOn:    "points+fills",
+				StackGroup: "one",
+			},
 		},
 		InfoText: `<i>Heap in use</i> is <b>/memory/classes/heap/objects + /memory/classes/heap/unused</b>. It amounts to the memory occupied by live objects and dead objects that are not yet marked free by the GC, plus some memory reserved for heap objects.
 <i>Heap free</i> is <b>/memory/classes/heap/free</b>, that is free memory that could be returned to the OS, but has not been.
@@ -181,10 +202,17 @@ func (p *heapGlobal) values(samples []metrics.Sample) interface{} {
 	heapInUse := heapObjects + heapUnused
 	heapFree := samples[p.idxfree].Value.Uint64()
 	heapReleased := samples[p.idxreleased].Value.Uint64()
+
+	memInfo, err := p.p.MemoryInfo()
+	if err != nil {
+		fmt.Printf("process mem info query failed. pid: %d, err: %s", p.pid, err.Error())
+	}
 	return []uint64{
 		heapInUse,
 		heapFree,
 		heapReleased,
+		memInfo.RSS,
+		memInfo.VMS,
 	}
 }
 
